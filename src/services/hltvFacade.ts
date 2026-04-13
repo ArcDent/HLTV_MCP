@@ -16,13 +16,14 @@ import type {
   TeamRecentQuery,
   UpcomingMatchesQuery
 } from "../types/hltv.js";
-import { dateTimeToTimestamp, nowIso } from "../utils/time.js";
+import { dateKeyInTimezone, dateTimeToTimestamp, nowIso, todayDateKey } from "../utils/time.js";
 import { includesIgnoreCase, parseHltvEntityLink, sanitizeHltvText } from "../utils/strings.js";
 import { HltvApiClient } from "../clients/hltvApiClient.js";
 import { PlayerResolver } from "../resolvers/playerResolver.js";
 import { TeamResolver } from "../resolvers/teamResolver.js";
 import { buildSlugCandidates, entityAliases, normalizeLookupName, uniqueStrings } from "../resolvers/entityIdentity.js";
 import { asRecord, pickArray, pickNumber, pickString } from "../utils/object.js";
+import { expandTeamAliases, matchEventName, matchTeamNames } from "../utils/localizedNames.js";
 import {
   collectRecentHighlights,
   normalizeMatches,
@@ -278,7 +279,9 @@ export class HltvFacade {
         teamFilter,
         event: normalizedQuery.event,
         days: normalizedQuery.days,
-        scheduled: false
+        scheduled: false,
+        todayOnly: false,
+        timezone: normalizedQuery.timezone
       });
 
       return {
@@ -296,13 +299,20 @@ export class HltvFacade {
   async getUpcomingMatches(
     query: UpcomingMatchesQuery
   ): Promise<ToolResponse<never, NormalizedMatch>> {
+    const todayOnly =
+      query.team_id === undefined &&
+      !query.team?.trim() &&
+      !query.event?.trim() &&
+      query.limit === undefined &&
+      query.days === undefined;
     const normalizedQuery = {
       team_id: query.team_id,
       team: query.team,
       event: query.event,
-      limit: query.limit ?? this.config.defaultResultLimit,
-      days: query.days ?? 7,
-      timezone: query.timezone ?? this.config.defaultTimezone
+      limit: todayOnly ? undefined : query.limit ?? this.config.defaultResultLimit,
+      days: todayOnly ? undefined : query.days ?? 7,
+      timezone: query.timezone ?? this.config.defaultTimezone,
+      today_only: todayOnly
     };
     const cacheKey = `matches_upcoming:${JSON.stringify(normalizedQuery)}`;
 
@@ -310,10 +320,12 @@ export class HltvFacade {
       const teamFilter = await this.resolveOptionalTeamFilter(normalizedQuery.team_id, normalizedQuery.team);
       const rawMatches = await this.client.getUpcomingMatches();
       const parsedItems = normalizeUpcomingMatches(rawMatches);
-      const windowedItems = this.applyTimeWindow(parsedItems, normalizedQuery.days, true);
-      const items = windowedItems
-        .filter((item) => this.matchesQuery(item, teamFilter, normalizedQuery.event))
-        .slice(0, normalizedQuery.limit);
+      const windowedItems = normalizedQuery.today_only
+        ? this.filterMatchesToToday(parsedItems, normalizedQuery.timezone)
+        : this.applyTimeWindow(parsedItems, normalizedQuery.days ?? 7, true);
+      const filteredItems = windowedItems.filter((item) => this.matchesQuery(item, teamFilter, normalizedQuery.event));
+      const items =
+        normalizedQuery.limit !== undefined ? filteredItems.slice(0, normalizedQuery.limit) : filteredItems;
       const notes = this.collectMatchQueryNotes({
         parsedItems,
         windowedItems,
@@ -321,7 +333,9 @@ export class HltvFacade {
         teamFilter,
         event: normalizedQuery.event,
         days: normalizedQuery.days,
-        scheduled: true
+        scheduled: true,
+        todayOnly: normalizedQuery.today_only,
+        timezone: normalizedQuery.timezone
       });
 
       return {
@@ -516,7 +530,7 @@ export class HltvFacade {
     event?: string
   ): boolean {
     const teamMatches = !teamFilter || this.matchTeamFilter(item, teamFilter);
-    const eventMatches = !event || includesIgnoreCase(item.event, event);
+    const eventMatches = !event || matchEventName(item.event, event);
     return teamMatches && eventMatches;
   }
 
@@ -643,18 +657,32 @@ export class HltvFacade {
       if (resolved) {
         return {
           id: resolved.id,
-          names: entityAliases(resolved)
+          names: uniqueStrings([...entityAliases(resolved), ...expandTeamAliases(normalizedTeamName)])
         };
       }
 
       return {
         id: teamId,
-        names: uniqueStrings([normalizedTeamName])
+        names: uniqueStrings([normalizedTeamName, ...expandTeamAliases(normalizedTeamName)])
       };
     }
 
-    const candidates = await this.teamResolver.resolve(normalizedTeamName!, false, 10);
-    if (!candidates.length) {
+    const localizedAliases = expandTeamAliases(normalizedTeamName);
+    const resolveCandidates = uniqueStrings([normalizedTeamName, ...localizedAliases]);
+
+    for (const candidateName of resolveCandidates) {
+      const candidates = await this.teamResolver.resolve(candidateName, false, 10);
+      if (!candidates.length) {
+        continue;
+      }
+
+      return {
+        id: candidates[0].id,
+        names: uniqueStrings([...entityAliases(candidates[0]), ...localizedAliases])
+      };
+    }
+
+    if (!localizedAliases.length) {
       throw new AppError("ENTITY_NOT_FOUND", `No team matched '${normalizedTeamName}'`, {
         retryable: false,
         details: {
@@ -665,8 +693,7 @@ export class HltvFacade {
     }
 
     return {
-      id: candidates[0].id,
-      names: entityAliases(candidates[0])
+      names: localizedAliases
     };
   }
 
@@ -699,8 +726,8 @@ export class HltvFacade {
       ]);
       const activeCandidates = this.buildFallbackTeamCandidates(
         this.collectActiveTeamCandidates([
-        ...normalizeResults(recentResults),
-        ...normalizeUpcomingMatches(upcomingMatches)
+          ...normalizeResults(recentResults),
+          ...normalizeUpcomingMatches(upcomingMatches)
         ]),
         16
       );
@@ -1094,20 +1121,12 @@ export class HltvFacade {
       return false;
     }
 
-    const itemNames = uniqueStrings([item.team1, item.team2, item.opponent]);
-    return teamFilter.names.some((name) => {
-      const target = normalizeLookupName(name);
-      return itemNames.some((candidate) => {
-        const normalized = normalizeLookupName(candidate);
-        return (
-          normalized.strict === target.strict ||
-          normalized.loose === target.loose ||
-          normalized.slug === target.slug ||
-          normalized.loose.includes(target.loose) ||
-          target.loose.includes(normalized.loose)
-        );
-      });
-    });
+    return matchTeamNames([item.team1, item.team2, item.opponent], teamFilter.names);
+  }
+
+  private filterMatchesToToday(matches: NormalizedMatch[], timezone: string): NormalizedMatch[] {
+    const currentDay = todayDateKey(timezone);
+    return matches.filter((item) => dateKeyInTimezone(item.scheduled_at, timezone) === currentDay);
   }
 
   private createMeta(ttlSec: number, overrides: Partial<ToolMeta> = {}): ToolMeta {
@@ -1251,15 +1270,19 @@ export class HltvFacade {
     teamFilter,
     event,
     days,
-    scheduled
+    scheduled,
+    todayOnly,
+    timezone
   }: {
     parsedItems: NormalizedMatch[];
     windowedItems: NormalizedMatch[];
     filteredItems: NormalizedMatch[];
     teamFilter?: { id?: number; names: string[] };
     event?: string;
-    days: number;
+    days?: number;
     scheduled: boolean;
+    todayOnly?: boolean;
+    timezone: string;
   }): string[] {
     const notes: string[] = [];
     if (filteredItems.length) {
@@ -1272,7 +1295,11 @@ export class HltvFacade {
     }
 
     if (!windowedItems.length) {
-      notes.push(`时间窗口过滤为最近 ${days} 天，但当前没有记录落在该时间范围内。`);
+      if (todayOnly) {
+        notes.push(`当前为无参数默认模式：仅展示 ${timezone} 时区的今日比赛；今天暂无可展示赛程。`);
+      } else {
+        notes.push(`时间窗口过滤为最近 ${days} 天，但当前没有记录落在该时间范围内。`);
+      }
       const missingTimeCount = parsedItems.filter((item) => !(scheduled ? item.scheduled_at : item.played_at)).length;
       if (missingTimeCount > 0) {
         notes.push(`${missingTimeCount} 条记录缺少可解析时间，无法参与精确时间过滤。`);
@@ -1288,7 +1315,11 @@ export class HltvFacade {
       notes.push(`赛事过滤条件未命中任何记录：${event.trim()}`);
     }
 
-    notes.push(`时间窗口过滤为最近 ${days} 天，超出窗口的记录已被排除。`);
+    if (todayOnly) {
+      notes.push(`当前为无参数默认模式：仅展示 ${timezone} 时区的今日比赛。`);
+    } else {
+      notes.push(`时间窗口过滤为最近 ${days} 天，超出窗口的记录已被排除。`);
+    }
 
     const missingTimeCount = windowedItems.filter((item) => !(scheduled ? item.scheduled_at : item.played_at)).length;
     if (missingTimeCount > 0) {

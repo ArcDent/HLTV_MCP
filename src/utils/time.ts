@@ -50,6 +50,32 @@ export function dateTimeToTimestamp(value: string | undefined): number | undefin
   return parsed?.getTime();
 }
 
+function formatDateKey(date: Date, timezone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(date);
+}
+
+export function dateKeyInTimezone(value: string | undefined, timezone: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return undefined;
+  }
+
+  return formatDateKey(parsed, timezone);
+}
+
+export function todayDateKey(timezone: string, reference = new Date()): string {
+  return formatDateKey(reference, timezone);
+}
+
 export function formatDateTime(
   value: string | undefined,
   timezone: string,

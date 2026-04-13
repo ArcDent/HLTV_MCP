@@ -8,6 +8,7 @@ import type {
   TeamRecentData
 } from "../types/hltv.js";
 import { formatDateTime } from "../utils/time.js";
+import { formatEventDisplayName, formatTeamDisplayName } from "../utils/localizedNames.js";
 import { SummaryService } from "../services/summaryService.js";
 
 export class ChineseRenderer {
@@ -26,7 +27,7 @@ export class ChineseRenderer {
       ? recent_results
           .map(
             (item) =>
-              `- ${item.result === "win" ? "胜" : item.result === "loss" ? "负" : "赛果未知"} ${item.opponent ?? item.team2 ?? item.team1 ?? "未知对手"} ${item.score ?? ""}${item.event ? `（${item.event}）` : ""}`
+              `- ${item.result === "win" ? "胜" : item.result === "loss" ? "负" : "赛果未知"} ${formatTeamDisplayName(item.opponent ?? item.team2 ?? item.team1) ?? "未知对手"} ${item.score ?? ""}${item.event ? `（${formatEventDisplayName(item.event) ?? item.event}）` : ""}`
           )
           .join("\n")
       : "- 暂无近期赛果";
@@ -35,13 +36,13 @@ export class ChineseRenderer {
       ? upcoming_matches
           .map(
             (item) =>
-              `- vs ${item.opponent ?? item.team2 ?? item.team1 ?? "未知对手"} ${item.scheduled_at ? formatDateTime(item.scheduled_at, timezone) : "待定"}${item.event ? `（${item.event}）` : ""}`
+              `- vs ${formatTeamDisplayName(item.opponent ?? item.team2 ?? item.team1) ?? "未知对手"} ${item.scheduled_at ? formatDateTime(item.scheduled_at, timezone) : "待定"}${item.event ? `（${formatEventDisplayName(item.event) ?? item.event}）` : ""}`
           )
           .join("\n")
       : "- 暂无近期赛程";
 
     return [
-      `【队伍近况】${profile.name}`,
+      `【队伍近况】${formatTeamDisplayName(profile.name) ?? profile.name}`,
       "",
       "【关键事实】",
       `- 排名：${profile.rank ? `#${profile.rank}` : "未知"}`,
@@ -79,7 +80,7 @@ export class ChineseRenderer {
       `【选手近况】${profile.name}`,
       "",
       "【关键事实】",
-      `- 所属队伍：${profile.team ?? "未知"}`,
+      `- 所属队伍：${formatTeamDisplayName(profile.team) ?? profile.team ?? "未知"}`,
       `- 国家/地区：${profile.country ?? "未知"}`,
       statsLines,
       highlightLines,
@@ -100,7 +101,7 @@ export class ChineseRenderer {
 
   renderMatches(response: ToolResponse<never, NormalizedMatch>): string {
     const summary = this.summaryService.summarizeMatches(response);
-    return this.renderMatchList("未来比赛", response, summary, true);
+    return this.renderMatchList(response.query.today_only ? "今日比赛" : "未来比赛", response, summary, true);
   }
 
   renderNews(response: ToolResponse<never, NewsItem>): string {
@@ -170,7 +171,10 @@ export class ChineseRenderer {
       ? response.items
           .map((item, index) => {
             const timeValue = scheduled ? item.scheduled_at : item.played_at;
-            return `${index + 1}. ${item.team1 ?? "TBD"} vs ${item.team2 ?? "TBD"}${item.score ? ` — ${item.score}` : ""}${item.event ? ` — ${item.event}` : ""}${timeValue ? ` — ${formatDateTime(timeValue, timezone)}` : ""}`;
+            const team1 = formatTeamDisplayName(item.team1) ?? item.team1 ?? "TBD";
+            const team2 = formatTeamDisplayName(item.team2) ?? item.team2 ?? "TBD";
+            const event = formatEventDisplayName(item.event) ?? item.event;
+            return `${index + 1}. ${team1} vs ${team2}${item.score ? ` — ${item.score}` : ""}${event ? ` — ${event}` : ""}${timeValue ? ` — ${formatDateTime(timeValue, timezone)}` : ""}`;
           })
           .join("\n")
       : emptyText;
