@@ -1,0 +1,200 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { CommandHandlers } from "./commands/commandHandlers.js";
+import { HltvFacade } from "./services/hltvFacade.js";
+import { createMcpServer } from "./mcp/server.js";
+import type { AppConfig } from "./config/env.js";
+import type { ToolResponse } from "./types/common.js";
+import type { NormalizedMatch } from "./types/hltv.js";
+import { parseMatchCommandArgs } from "./services/matchCommandParser.js";
+
+function createConfig(): AppConfig {
+  return {
+    mcpServerName: "hltv-mcp-service",
+    mcpServerVersion: "0.2.0",
+    hltvApiBaseUrl: "http://127.0.0.1:8020",
+    hltvApiTimeoutMs: 1_000,
+    defaultTimezone: "Asia/Shanghai",
+    defaultResultLimit: 5,
+    summaryMode: "template",
+    entityCacheTtlSec: 60,
+    teamRecentCacheTtlSec: 60,
+    playerRecentCacheTtlSec: 60,
+    resultsCacheTtlSec: 60,
+    matchesCacheTtlSec: 60,
+    newsCacheTtlSec: 60
+  };
+}
+
+function createMatchResponse(query: Record<string, unknown>): ToolResponse<never, NormalizedMatch> {
+  return {
+    query,
+    items: [],
+    meta: {
+      source: "test",
+      fetched_at: new Date("2026-04-14T00:00:00.000Z").toISOString(),
+      timezone: (query.timezone as string | undefined) ?? "Asia/Shanghai",
+      cache_hit: false,
+      ttl_sec: 0,
+      schema_version: "test",
+      partial: false
+    },
+    error: null
+  };
+}
+
+test("blank parser input stays empty and explicit filters survive parsing", () => {
+  assert.deepEqual(parseMatchCommandArgs({ raw_args: "   " }), {
+    raw_args: undefined,
+    payload: {},
+    dropped_fields: []
+  });
+
+  assert.deepEqual(parseMatchCommandArgs({ raw_args: "Spirit 3", timezone: "Asia/Shanghai" }), {
+    raw_args: "Spirit 3",
+    payload: {
+      team: "Spirit",
+      limit: 3,
+      timezone: "Asia/Shanghai"
+    },
+    dropped_fields: []
+  });
+});
+
+test("bare command handler routes to today matches", async () => {
+  let getTodayMatchesCalls = 0;
+  let getUpcomingMatchesCalls = 0;
+
+  const handlers = new CommandHandlers(
+    {
+      getTodayMatches: async () => {
+        getTodayMatchesCalls += 1;
+        return createMatchResponse({ timezone: "Asia/Shanghai", today_only: true });
+      },
+      getUpcomingMatches: async () => {
+        getUpcomingMatchesCalls += 1;
+        return createMatchResponse({ timezone: "Asia/Shanghai", today_only: false });
+      }
+    } as unknown as HltvFacade,
+    {
+      renderMatches: (response: ToolResponse<never, NormalizedMatch>) => JSON.stringify(response.query)
+    } as never
+  );
+
+  const rendered = await handlers.match();
+
+  assert.equal(getTodayMatchesCalls, 1);
+  assert.equal(getUpcomingMatchesCalls, 0);
+  assert.equal(rendered, JSON.stringify({ timezone: "Asia/Shanghai", today_only: true }));
+});
+
+test("explicit command handler filters still route to upcoming matches", async () => {
+  let capturedQuery: Record<string, unknown> | undefined;
+  let getTodayMatchesCalls = 0;
+
+  const handlers = new CommandHandlers(
+    {
+      getTodayMatches: async () => {
+        getTodayMatchesCalls += 1;
+        return createMatchResponse({ timezone: "Asia/Shanghai", today_only: true });
+      },
+      getUpcomingMatches: async (query: Record<string, unknown>) => {
+        capturedQuery = query;
+        return createMatchResponse({ ...query, timezone: "Asia/Shanghai", today_only: false });
+      }
+    } as unknown as HltvFacade,
+    {
+      renderMatches: (response: ToolResponse<never, NormalizedMatch>) => JSON.stringify(response.query)
+    } as never
+  );
+
+  const rendered = await handlers.match("Spirit", "IEM Melbourne", 3);
+
+  assert.equal(getTodayMatchesCalls, 0);
+  assert.deepEqual(capturedQuery, {
+    team: "Spirit",
+    event: "IEM Melbourne",
+    limit: 3
+  });
+  assert.equal(
+    rendered,
+    JSON.stringify({
+      team: "Spirit",
+      event: "IEM Melbourne",
+      limit: 3,
+      timezone: "Asia/Shanghai",
+      today_only: false
+    })
+  );
+});
+
+test("today facade helper delegates with an empty upcoming query", async () => {
+  const facade = new HltvFacade(
+    createConfig(),
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never
+  );
+
+  let capturedQuery: unknown;
+  facade.getUpcomingMatches = async (query) => {
+    capturedQuery = query as Record<string, unknown>;
+    return createMatchResponse({ timezone: "Asia/Shanghai", today_only: true });
+  };
+
+  const response = await facade.getTodayMatches();
+
+  assert.deepEqual(capturedQuery, {});
+  assert.equal(response.query.today_only, true);
+});
+
+test("mcp server registers and executes the bare match tool", async () => {
+  let getTodayMatchesCalls = 0;
+
+  const server = createMcpServer(
+    createConfig(),
+    {
+      resolveTeam: async () => ({ query: {}, items: [], meta: createMatchResponse({}).meta, error: null }),
+      resolvePlayer: async () => ({ query: {}, items: [], meta: createMatchResponse({}).meta, error: null }),
+      getTeamRecent: async () => ({ query: {}, data: undefined, meta: createMatchResponse({}).meta, error: null }),
+      getPlayerRecent: async () => ({ query: {}, data: undefined, meta: createMatchResponse({}).meta, error: null }),
+      getResultsRecent: async () => createMatchResponse({ timezone: "Asia/Shanghai" }),
+      getTodayMatches: async () => {
+        getTodayMatchesCalls += 1;
+        return createMatchResponse({ timezone: "Asia/Shanghai", today_only: true });
+      },
+      getUpcomingMatches: async () => createMatchResponse({ timezone: "Asia/Shanghai", today_only: false }),
+      getNewsDigest: async () => ({ query: {}, items: [], meta: createMatchResponse({}).meta, error: null })
+    } as unknown as HltvFacade,
+    {
+      renderResolveResult: () => "resolve",
+      renderTeamRecent: () => "team",
+      renderPlayerRecent: () => "player",
+      renderResults: () => "results",
+      renderMatches: () => "matches",
+      renderNews: () => "news"
+    } as never
+  );
+
+  const tools = (
+    server as unknown as {
+      _registeredTools: Record<string, { description?: string; handler: (input: unknown) => Promise<unknown> }>;
+    }
+  )._registeredTools;
+
+  assert.ok(tools.hltv_matches_today);
+  assert.match(tools.match_command_parse.description ?? "", /Skip this tool for bare \/match/i);
+
+  const result = (await tools.hltv_matches_today.handler({})) as {
+    structuredContent?: { query?: Record<string, unknown> };
+    isError?: boolean;
+  };
+
+  assert.equal(getTodayMatchesCalls, 1);
+  assert.equal(result.isError, false);
+  assert.deepEqual(result.structuredContent?.query, {
+    timezone: "Asia/Shanghai",
+    today_only: true
+  });
+});

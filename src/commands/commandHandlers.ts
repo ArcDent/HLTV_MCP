@@ -64,11 +64,13 @@ export class CommandHandlers {
   }
 
   async match(team?: string, event?: string, count?: number): Promise<string> {
-    const response = await this.facade.getUpcomingMatches({
-      team,
-      event,
-      limit: count
-    });
+    const response = team || event || count !== undefined
+      ? await this.facade.getUpcomingMatches({
+          team,
+          event,
+          limit: count
+        })
+      : await this.facade.getTodayMatches();
     return this.renderer.renderMatches(response);
   }
 

@@ -357,6 +357,10 @@ export class HltvFacade {
     });
   }
 
+  async getTodayMatches(): Promise<ToolResponse<never, NormalizedMatch>> {
+    return this.getUpcomingMatches({});
+  }
+
   async getNewsDigest(query: NewsDigestQuery): Promise<ToolResponse<never, NewsItem>> {
     const normalizedQuery = {
       limit: query.limit ?? this.config.defaultResultLimit,

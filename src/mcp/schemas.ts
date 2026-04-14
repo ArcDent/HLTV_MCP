@@ -83,11 +83,13 @@ export const matchesSchema = {
     .describe("Optional IANA timezone. For no-argument default mode, this may be the only extra field you pass.")
 };
 
+export const matchesTodaySchema = {};
+
 export const matchCommandParseSchema = {
   raw_args: z
     .string()
     .optional()
-    .describe("The exact raw argument string received by the /match command. Leave empty for '/match' with no args."),
+    .describe("The exact non-empty raw argument string received by the /match command. For bare '/match', skip this parser and call hltv_matches_today directly."),
   timezone: z
     .string()
     .min(1)

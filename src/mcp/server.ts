@@ -7,6 +7,7 @@ import { ChineseRenderer } from "../renderers/chineseRenderer.js";
 import {
   matchCommandParseSchema,
   matchesSchema,
+  matchesTodaySchema,
   newsSchema,
   playerRecentSchema,
   resolveEntitySchema,
@@ -92,7 +93,7 @@ export function createMcpServer(
 
   server.tool(
     "match_command_parse",
-    "Parse raw /match arguments into a safe payload. Drops invalid, generic, placeholder, or hallucinated fields so slash commands can call hltv_matches_upcoming safely.",
+    "Parse explicit non-empty /match filter text into a safe payload. Skip this tool for bare /match and call hltv_matches_today directly. Drops invalid, generic, placeholder, or hallucinated fields so slash commands can call hltv_matches_upcoming safely.",
     matchCommandParseSchema,
     async (input) => {
       const parsed = parseMatchCommandArgs(input);
@@ -101,8 +102,18 @@ export function createMcpServer(
   );
 
   server.tool(
+    "hltv_matches_today",
+    "Get today's HLTV matches in the active timezone. Use this for bare /match with no arguments so the tool call stays parameter-free.",
+    matchesTodaySchema,
+    async () => {
+      const response = await facade.getTodayMatches();
+      return toolResult(renderer.renderMatches(response), response, Boolean(response.error));
+    }
+  );
+
+  server.tool(
     "hltv_matches_upcoming",
-    "Get upcoming HLTV matches. With no explicit filters, return today's matches in the active timezone. For generic requests like '/match', 'today matches', '今日赛程', or '今天有什么比赛', omit team/event/limit/days and call with {} (or only timezone).",
+    "Get upcoming HLTV matches for explicit filters. For bare /match, prefer hltv_matches_today instead of this tool. For generic requests like 'today matches', '今日赛程', or '今天有什么比赛', omit team/event/limit/days and call with {} (or only timezone).",
     matchesSchema,
     async (input) => {
       const response = await facade.getUpcomingMatches(input);
