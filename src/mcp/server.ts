@@ -2,8 +2,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { AppConfig } from "../config/env.js";
 import { HltvFacade } from "../services/hltvFacade.js";
+import { parseMatchCommandArgs } from "../services/matchCommandParser.js";
 import { ChineseRenderer } from "../renderers/chineseRenderer.js";
 import {
+  matchCommandParseSchema,
+  matchesSchema,
+  matchesTodaySchema,
   newsSchema,
   playerRecentSchema,
   resolveEntitySchema,
@@ -88,9 +92,29 @@ export function createMcpServer(
   );
 
   server.tool(
+    "match_command_parse",
+    "Parse explicit non-empty /match filter text into a safe payload. Skip this tool for bare /match and call hltv_matches_today directly. Drops invalid, generic, placeholder, or hallucinated fields so slash commands can call hltv_matches_upcoming safely.",
+    matchCommandParseSchema,
+    async (input) => {
+      const parsed = parseMatchCommandArgs(input);
+      return toolResult(JSON.stringify(parsed, null, 2), parsed);
+    }
+  );
+
+  server.tool(
+    "hltv_matches_today",
+    "Get today's HLTV matches in the active timezone. Use this for bare /match with no arguments so the tool call stays parameter-free.",
+    matchesTodaySchema,
+    async () => {
+      const response = await facade.getTodayMatches();
+      return toolResult(renderer.renderMatches(response), response, Boolean(response.error));
+    }
+  );
+
+  server.tool(
     "hltv_matches_upcoming",
-    "Get upcoming HLTV matches with optional team or event filters.",
-    resultsSchema,
+    "Get upcoming HLTV matches for explicit filters. For bare /match, prefer hltv_matches_today instead of this tool. For generic requests like 'today matches', '今日赛程', or '今天有什么比赛', omit team/event/limit/days and call with {} (or only timezone).",
+    matchesSchema,
     async (input) => {
       const response = await facade.getUpcomingMatches(input);
       return toolResult(renderer.renderMatches(response), response, Boolean(response.error));
