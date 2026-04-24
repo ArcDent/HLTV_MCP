@@ -1400,9 +1400,19 @@ export class HltvFacade {
     }
 
     try {
-      const response = await compute();
-      this.cache.set(cacheKey, response, ttlSec);
-      return response;
+      return await this.cache.runOnce(cacheKey, async () => {
+        const cachedAfterWait = this.cache.get<ToolResponse<TData, TItem, TResolved>>(cacheKey);
+        if (cachedAfterWait) {
+          return this.cloneWithMeta(cachedAfterWait, {
+            cache_hit: true,
+            ttl_sec: ttlSec
+          });
+        }
+
+        const response = await compute();
+        this.cache.set(cacheKey, response, ttlSec);
+        return response;
+      });
     } catch (error) {
       const stale = this.cache.getStaleWithMeta<ToolResponse<TData, TItem, TResolved>>(cacheKey);
       if (stale) {
