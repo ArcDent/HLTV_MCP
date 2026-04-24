@@ -1377,11 +1377,12 @@ export class HltvFacade {
       this.cache.set(cacheKey, response, ttlSec);
       return response;
     } catch (error) {
-      const stale = this.cache.getStale<ToolResponse<TData, TItem, TResolved>>(cacheKey);
+      const stale = this.cache.getStaleWithMeta<ToolResponse<TData, TItem, TResolved>>(cacheKey);
       if (stale) {
-        return this.cloneWithMeta(stale, {
+        return this.cloneWithMeta(stale.value, {
           cache_hit: true,
           stale: true,
+          stale_age_sec: stale.staleAgeSec,
           ttl_sec: ttlSec
         });
       }
