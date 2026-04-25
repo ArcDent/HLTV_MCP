@@ -80,6 +80,35 @@ def test_extract_realtime_news_parses_grouped_live_rows():
     ]
 
 
+def test_realtime_news_parser_returns_extracted_live_rows():
+    response = _response_from_html(
+        """
+        <html>
+          <body>
+            <h2>Today's news</h2>
+            <a class="newsline article" href="/news/43001/bcg-masters-championship-2">
+              <span class="newsitemCategory">Portugal</span>
+              <div class="newstext">BCG Masters Championship 2 to be held in Vila Nova de Gaia</div>
+              <div class="newsrecent">15 minutes ago</div>
+            </a>
+          </body>
+        </html>
+        """
+    )
+
+    assert RealtimeNewsParser.parse(response) == [
+        {
+            "section": "today",
+            "category": "Portugal",
+            "title": "BCG Masters Championship 2 to be held in Vila Nova de Gaia",
+            "relative_time": "15 minutes ago",
+            "comments": None,
+            "link": "https://www.hltv.org/news/43001/bcg-masters-championship-2",
+            "summary_hint": None,
+        }
+    ]
+
+
 def test_extract_realtime_news_parses_feature_cards_with_summary_hint():
     response = _response_from_html(
         """
