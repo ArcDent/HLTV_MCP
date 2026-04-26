@@ -12,6 +12,7 @@
 - `hltv_player_recent`
 - `hltv_results_recent`
 - `hltv_matches_upcoming`
+- `hltv_realtime_news`
 - `hltv_news_digest`
 
 ### Realtime vs archive news
@@ -248,6 +249,7 @@ dist/index.js
   - `hltv_local_hltv_player_recent`
   - `hltv_local_hltv_results_recent`
   - `hltv_local_hltv_matches_upcoming`
+  - `hltv_local_hltv_realtime_news`
   - `hltv_local_hltv_news_digest`
 
 ---
