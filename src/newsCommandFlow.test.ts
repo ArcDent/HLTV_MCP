@@ -276,11 +276,21 @@ test("news command defaults to realtime news and docs mention continuation plus 
 
   assert.deepEqual(receivedQuery, { limit: 25 });
   assert.equal("tag" in (receivedQuery ?? {}), false);
-  assert.match(COMMAND_REGISTRY.news.usage, /25|page|offset/i);
+  assert.match(COMMAND_REGISTRY.news.description, /25/);
+  assert.match(COMMAND_REGISTRY.news.usage, /page/i);
+  assert.match(COMMAND_REGISTRY.news.usage, /offset/i);
   assert.match(readProjectText("docs/templates/opencode.commands.news.md"), /继续/);
   assert.match(readProjectText("docs/templates/opencode.commands.news.md"), /中文标题/);
   assert.match(readProjectText("docs/templates/opencode.commands.news.md"), /hltv_local_hltv_realtime_news/);
   assert.doesNotMatch(readProjectText("docs/templates/opencode.commands.news.md"), /来源/);
+
+  const readme = readProjectText("README.md");
+  assert.match(readme, /默认调用 `hltv_local_hltv_realtime_news\(\{ limit: 25 \}\)`/);
+  assert.match(readme, /hltv_local_hltv_news_digest/);
+  assert.match(readme, /next_page/);
+  assert.match(readme, /next_offset/);
+  assert.match(readme, /不展示数据源字段/);
+  assert.doesNotMatch(readme, /默认调用 `hltv_local_hltv_news_digest\(\{ limit: 25 \}\)`/);
 });
 
 test("news command forwards realtime page and offset without tag", async () => {
